@@ -10,7 +10,7 @@ def clean_ansi(text):
     return re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text).strip()
 
 async def bridge_server(websocket):
-    print("[*] DeoVex Cinematic Bridge Connected. Awaiting Launch Sequence...")
+    print("[*] DeoVex Director's Cut Bridge Connected. Awaiting Launch Sequence...")
     process = None
 
     async def read_termux_output():
@@ -36,7 +36,7 @@ async def bridge_server(websocket):
             
             print(f"[M0scan] {clean_text}")
 
-            # ⚡ 1. SOVEREIGN HEADER EXTRACTION
+            # ⚡ 1. SOVEREIGN HEADER
             if "Your Termux ID:" in clean_text:
                 t_id = clean_text.split("Your Termux ID:")[-1].strip()
                 await websocket.send(json.dumps({"type": "sys_info", "termux_id": t_id}))
@@ -65,13 +65,13 @@ async def bridge_server(websocket):
             elif "Enter Timeout" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "parameters"}))
             
-            # ⚡ 5. LIVE HITS & TARGETS
+            # ⚡ 5. LIVE HITS (Extracting Raw Results)
             elif "➔ ⇊" in clean_text:
                 status_type = clean_text.split("➔")[0].strip()
                 host_line = await process.stdout.readline()
                 await websocket.send(json.dumps({"type": "scan_result", "status": status_type, "details": clean_ansi(host_line.decode('utf-8', errors='ignore'))}))
             
-            # ⚡ 6. THE HEARTBEAT (Telemetry Interceptor)
+            # ⚡ 6. THE HUD TELEMETRY (Director's Cut Regex)
             elif "Elapsed:" in clean_text and "ETA:" in clean_text:
                 try:
                     el = re.search(r'Elapsed:\s*([\w:]+)', clean_text)
@@ -87,13 +87,18 @@ async def bridge_server(websocket):
                 
             elif "0Rated:" in clean_text and "Bugs:" in clean_text:
                 try:
-                    st = re.search(r'(\d+)/(\d+)', clean_text)
+                    # Extracts: ⚡️ 361/500 | 🌐 1639/575439
+                    batch_match = re.search(r'(\d+)/(\d+)', clean_text)
+                    total_match = re.search(r'\|\s*🌐\s*(\d+)/(\d+)', clean_text)
                     zr = re.search(r'0Rated:\s*(\d+)', clean_text)
                     bg = re.search(r'Bugs:\s*(\d+)', clean_text)
+                    
                     await websocket.send(json.dumps({
                         "type": "live_counts",
-                        "scanned": st.group(1) if st else "0",
-                        "total": st.group(2) if st else "0",
+                        "batch_prog": batch_match.group(1) if batch_match else "0",
+                        "batch_size": batch_match.group(2) if batch_match else "0",
+                        "scanned": total_match.group(1) if total_match else "0",
+                        "total": total_match.group(2) if total_match else "0",
                         "zero": zr.group(1) if zr else "0",
                         "bugs": bg.group(1) if bg else "0"
                     }))
@@ -111,13 +116,10 @@ async def bridge_server(websocket):
                 
                 if action == "launch_engine":
                     if process:
-                        print("[!] Anti-Collision: Engine already running. Ignored.")
                         continue
-                        
                     if not os.path.exists(TOKEN_FILE):
                         await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
                     else:
-                        print("[*] Token Found. Booting M0scan...")
                         process = await asyncio.create_subprocess_shell(
                             "/data/data/com.termux/files/usr/bin/M0scan", 
                             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -126,7 +128,6 @@ async def bridge_server(websocket):
                 elif action == "submit_pin":
                     pin = str(data.get("data")).strip()
                     if process:
-                        print("[*] Loop Catch: Terminating stuck engine to refresh token...")
                         try:
                             process.kill()
                             await process.wait()
@@ -136,7 +137,6 @@ async def bridge_server(websocket):
                     with open(TOKEN_FILE, "w") as f:
                         f.write(pin + "0\n") 
                     
-                    print(f"[*] PIN '{pin}' Secured. Launching Engine...")
                     process = await asyncio.create_subprocess_shell(
                         "/data/data/com.termux/files/usr/bin/M0scan", 
                         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
@@ -144,6 +144,7 @@ async def bridge_server(websocket):
                         
                 elif action == "user_input":
                     if process:
+                        # This is how the App sends P (Pause), R (Resume), E (Exit), S (Stop)
                         process.stdin.write((str(data.get("data")) + "\n").encode())
                         await process.stdin.drain()
                         
