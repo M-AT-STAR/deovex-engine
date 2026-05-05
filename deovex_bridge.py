@@ -32,11 +32,17 @@ async def bridge_server(websocket):
             clean_text = clean_ansi(line.decode('utf-8', errors='ignore'))
             if not clean_text: continue
             
-            # ⚡ TURN ON THE LIGHTS: Print EVERYTHING to the Termux screen so we can see errors
             print(f"[M0scan] {clean_text}")
             
             # --- THE SCENE DIRECTOR ---
-            if "COMMAND HUB" in clean_text:
+            # ⚡ NEW: The Master Authorization DRM Scenes
+            if "Enter Registered Name" in clean_text:
+                await websocket.send(json.dumps({"type": "scene", "name": "drm_name"}))
+            elif "Enter License Key" in clean_text:
+                await websocket.send(json.dumps({"type": "scene", "name": "drm_key"}))
+            
+            # Existing Scenes
+            elif "COMMAND HUB" in clean_text:
                 process.stdin.write(b"1\n") 
                 await process.stdin.drain()
             elif "TARGET DIRECTORY" in clean_text:
@@ -76,7 +82,6 @@ async def bridge_server(websocket):
                 elif action == "user_input":
                     if not process:
                         pin = str(data.get("data")).strip()
-                        # ⚡ FIX: Added the \n newline character to exactly match your bash script format
                         with open(TOKEN_FILE, "w") as f:
                             f.write(pin + "0\n") 
                         print(f"[*] PIN '{pin}' Injected. Launching M0scan...")
@@ -108,3 +113,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
