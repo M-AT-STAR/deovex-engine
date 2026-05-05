@@ -3,6 +3,9 @@
 # DEOVEX WIZARD - BRIDGE INSTALLER & GLOBAL COMMAND
 # ---------------------------------------------------
 
+# ⚡ THE FIX: Force Termux to the Home directory first
+cd /data/data/com.termux/files/home/ || exit
+
 HOME_DIR="/data/data/com.termux/files/home"
 BIN_DIR="/data/data/com.termux/files/usr/bin"
 
@@ -14,7 +17,8 @@ pkg install python -y > /dev/null 2>&1
 pip install websockets > /dev/null 2>&1
 
 echo -e "\e[96m[*] Securing Relay Protocol...\e[0m"
-curl -sO https://raw.githubusercontent.com/M-AT-STAR/deovex-engine/main/deovex_bridge.py
+# ⚡ THE FIX: Explicitly download the bridge straight into the home folder
+curl -sL "https://raw.githubusercontent.com/M-AT-STAR/deovex-engine/main/deovex_bridge.py" -o "$HOME_DIR/deovex_bridge.py"
 
 cat << 'EOF' > "$BIN_DIR/Termux@DeoVex"
 #!/bin/bash
