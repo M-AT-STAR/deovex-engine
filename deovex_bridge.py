@@ -7,10 +7,11 @@ import os
 TOKEN_FILE = "/data/data/com.termux/files/home/.m0_sys.tok"
 
 def clean_ansi(text):
+    """Purifies raw terminal output into clean text."""
     return re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text).strip()
 
 async def bridge_server(websocket):
-    print("[*] DeoVex Director's Cut Bridge Connected. Awaiting Launch Sequence...")
+    print("[*] DeoVex Universal Remote Connected. Awaiting Launch Sequence...")
     process = None
 
     async def read_termux_output():
@@ -34,45 +35,75 @@ async def bridge_server(websocket):
             clean_text = clean_ansi(line.decode('utf-8', errors='ignore'))
             if not clean_text: continue
             
+            # Mirror to Termux for local debugging
             print(f"[M0scan] {clean_text}")
 
-            # ⚡ 1. SOVEREIGN HEADER
-            if "Your Termux ID:" in clean_text:
-                t_id = clean_text.split("Your Termux ID:")[-1].strip()
-                await websocket.send(json.dumps({"type": "sys_info", "termux_id": t_id}))
+            # ==========================================
+            # 1. THE SOVEREIGN IDENTITY HEADER
+            # ==========================================
+            if "User:" in clean_text or "HW-ID:" in clean_text or "License Valid Until:" in clean_text or "Your Termux ID:" in clean_text:
+                await websocket.send(json.dumps({"type": "sys_info", "text": clean_text}))
+                continue
 
-            # ⚡ 2. THE LOOP CATCH
-            elif "Activation PIN for the second time" in clean_text or "Activation PIN:" in clean_text:
-                await websocket.send(json.dumps({"type": "scene", "name": "pin_entry", "error": "Invalid PIN. Security Lock Triggered. Try Again."}))
-            
-            # ⚡ 3. DRM GATEWAY
+            # ==========================================
+            # 2. THE LOOP CATCH (DRM & PIN)
+            # ==========================================
+            if "Activation PIN for the second time" in clean_text or "Activation PIN:" in clean_text:
+                await websocket.send(json.dumps({"type": "scene", "name": "pin_entry", "error": "Invalid PIN or Lock Triggered."}))
+                continue
             elif "Enter Registered Name" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "drm_name"}))
+                continue
             elif "Enter License Key" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "drm_key"}))
+                continue
             
-            # ⚡ 4. COMMAND HUB & EXECUTION SCENES
-            elif "COMMAND HUB" in clean_text:
+            # ==========================================
+            # 3. INTERACTIVE SCENE MAPPING
+            # ==========================================
+            if "COMMAND HUB" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "command_hub"}))
+                continue
             elif "TARGET DIRECTORY" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "target_directory"}))
+                continue
             elif "Unfinished Scans Detected" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "omni_vault"}))
+                continue
             elif "SNI Host(s) OR hosts file" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "target_input"}))
+                continue
             elif "SCAN MODE" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "scan_mode"}))
+                continue
             elif "Enter Timeout" in clean_text:
                 await websocket.send(json.dumps({"type": "scene", "name": "parameters"}))
+                continue
+            elif "nano" in clean_text.lower() and "hosts" in clean_text.lower():
+                await websocket.send(json.dumps({"type": "scene", "name": "editor"}))
+                continue
             
-            # ⚡ 5. LIVE HITS (Extracting Raw Results)
-            elif "➔ ⇊" in clean_text:
-                status_type = clean_text.split("➔")[0].strip()
-                host_line = await process.stdout.readline()
-                await websocket.send(json.dumps({"type": "scan_result", "status": status_type, "details": clean_ansi(host_line.decode('utf-8', errors='ignore'))}))
+            # ==========================================
+            # 4. ACTIONABLE RESULTS (HITS)
+            # ==========================================
+            if "➔ ⇊" in clean_text or "✅" in clean_text or "🔥" in clean_text or "🚫" in clean_text or "❌" in clean_text:
+                status_type = "hit" # Generic catch for frontend logic to parse
+                if "➔ ⇊" in clean_text:
+                    host_line = await process.stdout.readline()
+                    host_details = clean_ansi(host_line.decode('utf-8', errors='ignore'))
+                else:
+                    host_details = clean_text
+                
+                await websocket.send(json.dumps({
+                    "type": "scan_result", 
+                    "details": host_details
+                }))
+                continue
             
-            # ⚡ 6. THE HUD TELEMETRY (Director's Cut Regex)
-            elif "Elapsed:" in clean_text and "ETA:" in clean_text:
+            # ==========================================
+            # 5. THE HUD TELEMETRY (Real-Time Matrix)
+            # ==========================================
+            if "Elapsed:" in clean_text and "ETA:" in clean_text:
                 try:
                     el = re.search(r'Elapsed:\s*([\w:]+)', clean_text)
                     eta = re.search(r'ETA:\s*([\w:]+)', clean_text)
@@ -84,10 +115,10 @@ async def bridge_server(websocket):
                         "pshd": pshd.group(1) if pshd else "0"
                     }))
                 except: pass
+                continue
                 
-            elif "0Rated:" in clean_text and "Bugs:" in clean_text:
+            if "0Rated:" in clean_text and "Bugs:" in clean_text:
                 try:
-                    # Extracts: ⚡️ 361/500 | 🌐 1639/575439
                     batch_match = re.search(r'(\d+)/(\d+)', clean_text)
                     total_match = re.search(r'\|\s*🌐\s*(\d+)/(\d+)', clean_text)
                     zr = re.search(r'0Rated:\s*(\d+)', clean_text)
@@ -103,9 +134,17 @@ async def bridge_server(websocket):
                         "bugs": bg.group(1) if bg else "0"
                     }))
                 except: pass
+                continue
 
-            elif "Network Carrier" in clean_text or "SCAN COMPLETED" in clean_text:
-                await websocket.send(json.dumps({"type": "telemetry", "text": clean_text}))
+            if "SCAN COMPLETED" in clean_text:
+                await websocket.send(json.dumps({"type": "telemetry", "text": "COMPLETED"}))
+                continue
+
+            # ==========================================
+            # 6. THE RAW FEED FALLBACK (Guides & Errors)
+            # ==========================================
+            # If the text did not match any of the strict rules above, send it to the App's log console.
+            await websocket.send(json.dumps({"type": "raw_feed", "text": clean_text}))
 
     async def read_app_input():
         nonlocal process
@@ -115,8 +154,7 @@ async def bridge_server(websocket):
                 action = data.get("action")
                 
                 if action == "launch_engine":
-                    if process:
-                        continue
+                    if process: continue
                     if not os.path.exists(TOKEN_FILE):
                         await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
                     else:
@@ -144,7 +182,6 @@ async def bridge_server(websocket):
                         
                 elif action == "user_input":
                     if process:
-                        # This is how the App sends P (Pause), R (Resume), E (Exit), S (Stop)
                         process.stdin.write((str(data.get("data")) + "\n").encode())
                         await process.stdin.drain()
                         
@@ -157,7 +194,7 @@ async def bridge_server(websocket):
         except websockets.exceptions.ConnectionClosed:
             print("[*] DeoVex App Disconnected.")
         except ConnectionResetError:
-            print("\n[!] Error: Connection to M0scan severed.")
+            pass
         except Exception as e:
             print(f"[!] Bridge Error: {e}")
 
