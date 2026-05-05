@@ -118,6 +118,41 @@ async def handle_scan(websocket, payload):
     await websocket.send(json.dumps({"action": "scan_complete"}))
 
 async def server_handler(websocket):
+    # 1. Instantly send the dynamic options schema to the app when it connects
+    schema_payload = {
+        "action": "engine_ready",
+        "engine_name": "M@☆0scan V76.24 [Sovereign]",
+        "schema": [
+            {
+                "id": "threads", 
+                "label": "Max Threads (Speed)", 
+                "type": "range", 
+                "min": 1, 
+                "max": 100, 
+                "default": 50
+            },
+            {
+                "id": "timeout", 
+                "label": "Timeout (Seconds)", 
+                "type": "number", 
+                "default": 5
+            },
+            {
+                "id": "mode", 
+                "label": "Engine Attack Mode", 
+                "type": "select", 
+                "options": [
+                    "1 - Deep HTTP + TCP Sniper",
+                    "2 - Raw TCP Stealth (Bypass Firewalls)",
+                    "3 - Captive Portal Aggressive"
+                ],
+                "default": "1 - Deep HTTP + TCP Sniper"
+            }
+        ]
+    }
+    await websocket.send(json.dumps(schema_payload))
+
+    # 2. Listen for the app's commands
     try:
         async for message in websocket:
             data = json.loads(message)
@@ -127,8 +162,10 @@ async def server_handler(websocket):
 
 async def main():
     print("[*] M@☆0scan Headless Engine ONLINE. Waiting for DeoVex App commands...")
+    # Bind to localhost specifically so only the local app can connect
     async with websockets.serve(server_handler, "127.0.0.1", 8765):
         await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
+
