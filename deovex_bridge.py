@@ -3,15 +3,17 @@ import websockets
 import json
 import re
 import os
+import signal
+import sys
 
 TOKEN_FILE = "/data/data/com.termux/files/home/.m0_sys.tok"
 
 def clean_ansi(text):
-    """Purifies raw terminal output into clean text."""
+    """Purifies raw terminal output into clean text for state matching."""
     return re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text).strip()
 
 async def bridge_server(websocket):
-    print("[*] DeoVex Universal Remote Connected. Awaiting Launch Sequence...")
+    print("[*] DeoVex Unleashed Bridge Connected. Awaiting Launch Sequence...")
     process = None
 
     async def read_termux_output():
@@ -22,27 +24,41 @@ async def bridge_server(websocket):
                 continue
             
             try:
-                line = await process.stdout.readline()
+                raw_line = await process.stdout.readline()
             except Exception:
                 break
                 
-            if not line:
+            if not raw_line:
                 print("\n[!] M0scan Subprocess exited or terminated.")
                 process = None
                 await websocket.send(json.dumps({"type": "engine_status", "status": "offline"}))
                 break
-                
-            clean_text = clean_ansi(line.decode('utf-8', errors='ignore'))
+            
+            # Decode the raw line, preserving ANSI color codes for the App's RawFeedConsole
+            raw_text = raw_line.decode('utf-8', errors='ignore')
+            clean_text = clean_ansi(raw_text)
+            
             if not clean_text: continue
             
-            # Mirror to Termux for local debugging
-            print(f"[M0scan] {clean_text}")
+            # Mirror the exact colored output to the local Termux screen
+            sys.stdout.write(raw_text)
+            sys.stdout.flush()
 
             # ==========================================
-            # 1. THE SOVEREIGN IDENTITY HEADER
+            # 1. THE SOVEREIGN IDENTITY EXTRACTION
             # ==========================================
-            if "User:" in clean_text or "HW-ID:" in clean_text or "License Valid Until:" in clean_text or "Your Termux ID:" in clean_text:
-                await websocket.send(json.dumps({"type": "sys_info", "text": clean_text}))
+            if "[User]" in clean_text or "User:" in clean_text:
+                val = clean_text.split(":")[-1].replace("VERIFIED (", "").replace(")", "").strip()
+                await websocket.send(json.dumps({"type": "sys_info", "key": "user", "val": val}))
+                continue
+            if "[HW-ID]" in clean_text or "HW-ID:" in clean_text:
+                await websocket.send(json.dumps({"type": "sys_info", "key": "hw_id", "val": clean_text.split(":")[-1].strip()}))
+                continue
+            if "[License" in clean_text or "License" in clean_text:
+                await websocket.send(json.dumps({"type": "sys_info", "key": "license", "val": clean_text.split(":")[-1].strip()}))
+                continue
+            if "Your Termux ID:" in clean_text:
+                await websocket.send(json.dumps({"type": "sys_info", "key": "termux_id", "val": clean_text.split(":")[-1].strip()}))
                 continue
 
             # ==========================================
@@ -87,7 +103,7 @@ async def bridge_server(websocket):
             # 4. ACTIONABLE RESULTS (HITS)
             # ==========================================
             if "➔ ⇊" in clean_text or "✅" in clean_text or "🔥" in clean_text or "🚫" in clean_text or "❌" in clean_text:
-                status_type = "hit" # Generic catch for frontend logic to parse
+                status_type = "hit"
                 if "➔ ⇊" in clean_text:
                     host_line = await process.stdout.readline()
                     host_details = clean_ansi(host_line.decode('utf-8', errors='ignore'))
@@ -141,10 +157,10 @@ async def bridge_server(websocket):
                 continue
 
             # ==========================================
-            # 6. THE RAW FEED FALLBACK (Guides & Errors)
+            # 6. THE RAW FEED FALLBACK (ANSI PRESERVED)
             # ==========================================
-            # If the text did not match any of the strict rules above, send it to the App's log console.
-            await websocket.send(json.dumps({"type": "raw_feed", "text": clean_text}))
+            # Sends raw terminal colors to the App's System Console
+            await websocket.send(json.dumps({"type": "raw_feed", "text": raw_text}))
 
     async def read_app_input():
         nonlocal process
@@ -179,7 +195,17 @@ async def bridge_server(websocket):
                         "/data/data/com.termux/files/usr/bin/M0scan", 
                         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
                     )
-                        
+                
+                # ⚡ THE HARDWARE INTERRUPT (CTRL+C)
+                elif action == "interrupt":
+                    if process:
+                        print("[*] Received SIGINT (Ctrl+C) from App. Halting engine...")
+                        try:
+                            os.kill(process.pid, signal.SIGINT)
+                        except Exception as e:
+                            print(f"[!] Interrupt failed: {e}")
+
+                # ⚡ STANDARD KEYBOARD INPUT
                 elif action == "user_input":
                     if process:
                         process.stdin.write((str(data.get("data")) + "\n").encode())
@@ -206,3 +232,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
