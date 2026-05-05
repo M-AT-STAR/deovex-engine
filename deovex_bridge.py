@@ -2,6 +2,7 @@ import asyncio
 import websockets
 import json
 import re
+import os
 
 def clean_ansi(text):
     return re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text).strip()
@@ -9,6 +10,7 @@ def clean_ansi(text):
 async def bridge_server(websocket):
     print("[*] DeoVex App Connected. Awaiting Launch Sequence...")
     process = None
+    TOKEN_FILE = "/data/data/com.termux/files/home/.m0_sys.tok"
 
     async def read_termux_output():
         nonlocal process
@@ -22,9 +24,7 @@ async def bridge_server(websocket):
             if not clean_text: continue
             
             # --- THE SCENE DIRECTOR ---
-            if "Activation PIN" in clean_text:
-                await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
-            elif "COMMAND HUB" in clean_text:
+            if "COMMAND HUB" in clean_text:
                 process.stdin.write(b"1\n") 
                 await process.stdin.drain()
             elif "TARGET DIRECTORY" in clean_text:
@@ -51,12 +51,28 @@ async def bridge_server(websocket):
             action = data.get("action")
             
             if action == "launch_engine":
-                process = await asyncio.create_subprocess_shell(
-                    "M0scan", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-                )
+                # ⚡ THE BYPASS: Check if authorized. If not, ask app for PIN.
+                if not os.path.exists(TOKEN_FILE):
+                    await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
+                else:
+                    process = await asyncio.create_subprocess_shell(
+                        "M0scan", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+                    )
+                    
             elif action == "user_input":
-                process.stdin.write((str(data.get("data")) + "\n").encode())
-                await process.stdin.drain()
+                # ⚡ THE BYPASS: If process hasn't started, this input is the PIN!
+                if not process:
+                    pin = str(data.get("data")).strip()
+                    with open(TOKEN_FILE, "w") as f:
+                        f.write(pin + "0") # M0scan adds a 0 salt
+                    print("[*] PIN Injected. Launching M0scan...")
+                    process = await asyncio.create_subprocess_shell(
+                        "M0scan", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+                    )
+                else:
+                    process.stdin.write((str(data.get("data")) + "\n").encode())
+                    await process.stdin.drain()
+                    
             elif action == "batch_input":
                 for val in data.get("data", []):
                     process.stdin.write((str(val) + "\n").encode())
