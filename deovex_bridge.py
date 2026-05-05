@@ -18,10 +18,22 @@ async def bridge_server(websocket):
             if not process:
                 await asyncio.sleep(0.1)
                 continue
-            line = await process.stdout.readline()
-            if not line: break
+            
+            try:
+                line = await process.stdout.readline()
+            except Exception:
+                break
+                
+            if not line:
+                print("\n[!] M0scan Subprocess exited or crashed.")
+                process = None
+                break
+                
             clean_text = clean_ansi(line.decode('utf-8', errors='ignore'))
             if not clean_text: continue
+            
+            # ⚡ TURN ON THE LIGHTS: Print EVERYTHING to the Termux screen so we can see errors
+            print(f"[M0scan] {clean_text}")
             
             # --- THE SCENE DIRECTOR ---
             if "COMMAND HUB" in clean_text:
@@ -46,37 +58,47 @@ async def bridge_server(websocket):
 
     async def read_app_input():
         nonlocal process
-        async for message in websocket:
-            data = json.loads(message)
-            action = data.get("action")
-            
-            if action == "launch_engine":
-                # ⚡ THE BYPASS: Check if authorized. If not, ask app for PIN.
-                if not os.path.exists(TOKEN_FILE):
-                    await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
-                else:
-                    process = await asyncio.create_subprocess_shell(
-                        "M0scan", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-                    )
-                    
-            elif action == "user_input":
-                # ⚡ THE BYPASS: If process hasn't started, this input is the PIN!
-                if not process:
-                    pin = str(data.get("data")).strip()
-                    with open(TOKEN_FILE, "w") as f:
-                        f.write(pin + "0") # M0scan adds a 0 salt
-                    print("[*] PIN Injected. Launching M0scan...")
-                    process = await asyncio.create_subprocess_shell(
-                        "M0scan", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
-                    )
-                else:
-                    process.stdin.write((str(data.get("data")) + "\n").encode())
-                    await process.stdin.drain()
-                    
-            elif action == "batch_input":
-                for val in data.get("data", []):
-                    process.stdin.write((str(val) + "\n").encode())
-                    await process.stdin.drain()
+        try:
+            async for message in websocket:
+                data = json.loads(message)
+                action = data.get("action")
+                
+                if action == "launch_engine":
+                    if not os.path.exists(TOKEN_FILE):
+                        await websocket.send(json.dumps({"type": "scene", "name": "pin_entry"}))
+                    else:
+                        print("[*] Token Found. Booting M0scan...")
+                        process = await asyncio.create_subprocess_shell(
+                            "/data/data/com.termux/files/usr/bin/M0scan", 
+                            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+                        )
+                        
+                elif action == "user_input":
+                    if not process:
+                        pin = str(data.get("data")).strip()
+                        # ⚡ FIX: Added the \n newline character to exactly match your bash script format
+                        with open(TOKEN_FILE, "w") as f:
+                            f.write(pin + "0\n") 
+                        print(f"[*] PIN '{pin}' Injected. Launching M0scan...")
+                        process = await asyncio.create_subprocess_shell(
+                            "/data/data/com.termux/files/usr/bin/M0scan", 
+                            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+                        )
+                    else:
+                        process.stdin.write((str(data.get("data")) + "\n").encode())
+                        await process.stdin.drain()
+                        
+                elif action == "batch_input":
+                    if process:
+                        for val in data.get("data", []):
+                            process.stdin.write((str(val) + "\n").encode())
+                            await process.stdin.drain()
+        except websockets.exceptions.ConnectionClosed:
+            print("[*] DeoVex App Disconnected.")
+        except ConnectionResetError:
+            print("\n[!] Error: Lost connection to M0scan. It may have crashed.")
+        except Exception as e:
+            print(f"[!] Bridge Error: {e}")
 
     await asyncio.gather(read_termux_output(), read_app_input())
 
